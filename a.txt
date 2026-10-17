@@ -1,0 +1,217 @@
+git clone https://github.com/mit-pdos/xv6-public.git
+
+
+Step 1: Modify proc.h
+Open:
+nano proc.h
+
+Add near the top:
+#define DEFAULT_PRIORITY 1
+#define MIN_PRIORITY 1
+#define MAX_PRIORITY 4
+
+Inside struct proc, after int pid;, add:
+int priority;
+
+Save: Ctrl+O → Enter → Ctrl+X.
+
+
+
+Step 2: Modify proc.c — Initialize priority
+Open:
+nano proc.c
+
+Inside allocproc(), find:
+p->pid = nextpid++;
+
+Add immediately after:
+p->priority = DEFAULT_PRIORITY;
+
+Step 3: Modify proc.c — Inherit priority in fork()
+In the same file, find:
+np->parent = curproc;
+
+Add immediately after:
+np->priority = curproc->priority;
+
+
+
+Step 4: Modify proc.c — Replace the scheduler
+
+void
+scheduler(void)
+{
+  struct proc *p, *best;
+  struct cpu *c = mycpu();
+  c->proc = 0;
+
+  for(;;){
+    sti();
+    acquire(&ptable.lock);
+
+    best = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state == RUNNABLE){
+        if(best == 0 || p->priority > best->priority)
+          best = p;
+      }
+    }
+
+    if(best != 0){
+      c->proc = best;
+      switchuvm(best);
+      best->state = RUNNING;
+      swtch(&(c->scheduler), best->context);
+      switchkvm();
+      c->proc = 0;
+    }
+
+    release(&ptable.lock);
+  }
+}
+
+
+
+Step 5: Modify syscall.h
+Open:
+nano syscall.h
+
+At the end of the existing system call definitions, add:
+#define SYS_party 22
+
+Check that syscall number 22 is not already assigned.
+
+
+
+Step 6: Modify syscall.c
+Open:
+nano syscall.c
+
+Add this declaration with the other system call declarations:
+extern int sys_party(void);
+
+In the syscalls[] array, add:
+[SYS_party] sys_party,
+
+Place it with the other entries, before the closing };.
+
+
+Step 7: Modify sysproc.c
+Open:
+nano sysproc.c
+
+Add this function:
+int
+sys_party(void)
+{
+  int priority;
+
+  if(argint(0, &priority) < 0)
+    return -1;
+
+  if(priority < MIN_PRIORITY || priority > MAX_PRIORITY)
+    return -1;
+
+  myproc()->priority = priority;
+  return 0;
+}
+
+
+Step 8: Modify user.h
+Open:
+nano user.h
+
+Add with the other system call declarations:
+int party(int);
+
+
+Step 9: Modify usys.S
+Open:
+nano usys.S
+
+Add with the other SYSCALL entries:
+SYSCALL(party)
+
+Step 10: Create the test program
+Create a new file:
+nano priority.c
+
+#include "types.h"
+#include "stat.h"
+#include "user.h"
+
+int
+main(void)
+{
+  int i, pid;
+  int priorities[] = {1, 2, 3, 4};
+
+  for(i = 0; i < 4; i++){
+    pid = fork();
+
+    if(pid == 0){
+      int j;
+      int pr = priorities[i];
+
+      if(party(pr) < 0){
+        printf(1, "Failed to set priority\n");
+        exit();
+      }
+
+      printf(1, "PID %d Priority %d started\n", getpid(), pr);
+
+      for(j = 0; j < 5000000; j++)
+        ;
+
+      printf(1, "PID %d Priority %d finished\n", getpid(), pr);
+      exit();
+    }
+  }
+
+  for(i = 0; i < 4; i++)
+    wait();
+
+  exit();
+}
+
+
+Step 11: Modify Makefile
+Open:
+nano Makefile
+
+Find UPROGS.
+Add _priority\ to the list, before the final entry or closing parenthesis, following the existing format.
+
+
+
+Step 12: Compile xv6
+From the xv6-public directory, run:
+make clean
+make
+
+If compilation succeeds, start xv6:
+make qemu-nox
+
+At the xv6 shell, run:
+priority
+
+
+Step 13: Create the patch file
+Return to the xv6 directory if necessary:
+cd ~/OS/priority/xv6-public
+
+Check the changed files:
+git status
+
+Stage the implementation files:
+git add Makefile proc.h proc.c syscall.h syscall.c sysproc.c user.h usys.S priority.c
+
+Generate the patch:
+git diff --cached > priority.patch
+
+Verify it:
+git diff --cached --stat
+ls -l priority.patch
+
+The patch file will be saved as:
+~/OS/priority/xv6-public/priority.patch
